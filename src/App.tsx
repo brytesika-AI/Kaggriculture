@@ -1,11 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { 
-  INITIAL_STATE, 
-  runDailyTick, 
-  CROP_CONFIGS 
-} from './game/simulation';
-import type { GameState, AgentAction, CropType } from './game/simulation';
-import { queryAgent } from './game/agents';
+import { INITIAL_STATE } from './game/simulation';
+import type { GameState, CropType } from './game/simulation';
 import type { AgentConfig, AgentResponse } from './game/agents';
 import { SettingsPanel } from './components/SettingsPanel';
 import { Telemetry } from './components/Telemetry';
@@ -68,7 +63,24 @@ function App() {
     }
   }, [state.cash]);
 
-  // Main tick loop
+  // Synchronize initial state from backend
+  useEffect(() => {
+    const fetchInitialState = async () => {
+      try {
+        const res = await fetch('/api/state');
+        if (res.ok) {
+          const data = await res.json();
+          setState(data.state);
+          setAgentThoughts(data.thoughts);
+        }
+      } catch (err) {
+        console.error("Failed to fetch initial state:", err);
+      }
+    };
+    fetchInitialState();
+  }, []);
+
+  // Main tick loop calling FastAPI backend
   useEffect(() => {
     let intervalId: any = null;
 
@@ -77,64 +89,27 @@ function App() {
         if (isQueryingRef.current) return;
         isQueryingRef.current = true;
 
-        const currentState = stateRef.current;
         const currentConfig = configRef.current;
 
         // 1. Set agents thinking status
         setIsThinking({ Farmer: true, Trader: true, RiskAnalyst: true });
 
         try {
-          // 2. Query Agents sequentially to model conversation flow
-          // First, Risk Analyst reviews forecast and advises
-          const riskResult = await queryAgent('RiskAnalyst', currentState, currentConfig);
-          setIsThinking(prev => ({ ...prev, RiskAnalyst: false }));
-          setAgentThoughts(prev => ({ ...prev, RiskAnalyst: riskResult }));
+          const res = await fetch('/api/tick', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(currentConfig)
+          });
           
-          // Construct intermediate state with Analyst messages so Farmer/Trader can read them
-          let intermediateState = { ...currentState };
-          riskResult.actions.forEach(act => {
-            if (act.type === 'MESSAGE' && act.recipient && act.message) {
-              intermediateState.agentMessages.push({
-                day: currentState.day,
-                sender: 'RiskAnalyst',
-                recipient: act.recipient,
-                message: act.message
-              });
-            }
-          });
-
-          // Second, Farmer decides what to water/plant/harvest
-          const farmerResult = await queryAgent('Farmer', intermediateState, currentConfig);
-          setIsThinking(prev => ({ ...prev, Farmer: false }));
-          setAgentThoughts(prev => ({ ...prev, Farmer: farmerResult }));
-
-          // Update intermediate state with Farmer messages (e.g. asking Trader for seeds)
-          farmerResult.actions.forEach(act => {
-            if (act.type === 'MESSAGE' && act.recipient && act.message) {
-              intermediateState.agentMessages.push({
-                day: currentState.day,
-                sender: 'Farmer',
-                recipient: act.recipient,
-                message: act.message
-              });
-            }
-          });
-
-          // Third, Trader sells crop and buys seeds/fertilizers
-          const traderResult = await queryAgent('Trader', intermediateState, currentConfig);
-          setIsThinking(prev => ({ ...prev, Trader: false }));
-          setAgentThoughts(prev => ({ ...prev, Trader: traderResult }));
-
-          // 3. Compile all actions
-          const riskActions: AgentAction[] = riskResult.actions.map(a => ({ ...a, agent: 'RiskAnalyst' } as AgentAction));
-          const farmerActions: AgentAction[] = farmerResult.actions.map(a => ({ ...a, agent: 'Farmer' } as AgentAction));
-          const traderActions: AgentAction[] = traderResult.actions.map(a => ({ ...a, agent: 'Trader' } as AgentAction));
-
-          const dayActions = [...riskActions, ...farmerActions, ...traderActions];
-
-          // 4. Run tick update
-          setState(prev => runDailyTick(prev, dayActions));
-
+          if (!res.ok) {
+            throw new Error(`Backend tick failed: ${res.statusText}`);
+          }
+          
+          const data = await res.json();
+          setState(data.state);
+          setAgentThoughts(data.thoughts);
         } catch (err) {
           console.error("Simulation tick failed:", err);
         } finally {
@@ -150,84 +125,46 @@ function App() {
     };
   }, [isRunning, speedMs]);
 
-  // Handle manual player overrides
-  const handleManualAction = (action: { type: string; plotId: number; cropType?: CropType }) => {
-    setState(prev => {
-      const next = JSON.parse(JSON.stringify(prev)) as GameState;
-      const plot = next.plots[action.plotId];
-
-      if (action.type === 'WATER') {
-        const waterNeeded = Math.min(50, 100 - plot.waterLevel);
-        if (next.water >= waterNeeded) {
-          next.water -= waterNeeded;
-          plot.waterLevel += waterNeeded;
-          next.logs.push({
-            day: next.day,
-            agent: 'Manual Override',
-            action: 'Water Crop',
-            details: `Watered Plot #${action.plotId} (+${waterNeeded} moisture).`,
-            type: 'info'
-          });
-        }
-      } 
-      
-      else if (action.type === 'PLANT' && action.cropType) {
-        if (next.seeds[action.cropType] > 0) {
-          next.seeds[action.cropType] -= 1;
-          plot.cropType = action.cropType;
-          plot.growth = 0;
-          plot.daysGrowing = 0;
-          plot.waterLevel = Math.max(plot.waterLevel, 40);
-          next.logs.push({
-            day: next.day,
-            agent: 'Manual Override',
-            action: 'Plant Crop',
-            details: `Planted ${CROP_CONFIGS[action.cropType].name} on Plot #${action.plotId}.`,
-            type: 'info'
-          });
-        }
-      } 
-      
-      else if (action.type === 'FERTILIZE') {
-        if (next.fertilizer > 0 && !plot.fertilized) {
-          next.fertilizer -= 1;
-          plot.fertilized = true;
-          next.logs.push({
-            day: next.day,
-            agent: 'Manual Override',
-            action: 'Apply Fertilizer',
-            details: `Applied fertilizer to Plot #${action.plotId}.`,
-            type: 'info'
-          });
-        }
-      } 
-      
-      else if (action.type === 'HARVEST') {
-        if (plot.cropType && plot.growth >= 100) {
-          const crop = plot.cropType;
-          next.harvested[crop] += 1;
-          next.logs.push({
-            day: next.day,
-            agent: 'Manual Override',
-            action: 'Harvest Crop',
-            details: `Harvested ${CROP_CONFIGS[crop].name} from Plot #${action.plotId}.`,
-            type: 'info'
-          });
-          plot.cropType = null;
-          plot.growth = 0;
-          plot.daysGrowing = 0;
-          plot.fertilized = false;
-        }
+  // Handle manual player overrides via FastAPI backend
+  const handleManualAction = async (action: { type: string; plotId: number; cropType?: CropType }) => {
+    try {
+      const res = await fetch('/api/action', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: action.type,
+          plotId: action.plotId,
+          cropType: action.cropType || null
+        })
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || "Manual override action failed");
       }
-
-      return next;
-    });
+      const data = await res.json();
+      setState(data.state);
+      setAgentThoughts(data.thoughts);
+    } catch (err: any) {
+      console.error("Manual action failed:", err);
+    }
   };
 
-  const handleReset = () => {
-    setState(INITIAL_STATE);
+  const handleReset = async () => {
+    try {
+      const res = await fetch('/api/reset', {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setState(data.state);
+        setAgentThoughts(data.thoughts);
+      }
+    } catch (err) {
+      console.error("Reset failed:", err);
+    }
     setIsRunning(false);
-    setAgentThoughts({ Farmer: null, Trader: null, RiskAnalyst: null });
     setIsThinking({ Farmer: false, Trader: false, RiskAnalyst: false });
   };
 

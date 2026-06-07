@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { GameState, CropType } from '../game/simulation';
 import { CROP_CONFIGS } from '../game/simulation';
 import { Droplet, Sprout, Star, Sparkles, ChevronRight } from 'lucide-react';
@@ -8,9 +8,105 @@ interface FarmGridProps {
   onManualAction: (action: { type: string; plotId: number; cropType?: CropType }) => void;
 }
 
+interface FloatingIndicator {
+  id: number;
+  plotId: number;
+  text: string;
+  color: string;
+  timestamp: number;
+}
+
 export const FarmGrid: React.FC<FarmGridProps> = ({ state, onManualAction }) => {
   const [selectedPlotId, setSelectedPlotId] = useState<number | null>(null);
   const { plots, seeds, water, fertilizer } = state;
+  const [indicators, setIndicators] = useState<FloatingIndicator[]>([]);
+  const prevPlotsRef = useRef(plots);
+
+  // Monitor plots and trigger floating text
+  useEffect(() => {
+    const prevPlots = prevPlotsRef.current;
+    const currentPlots = plots;
+    
+    if (prevPlots && prevPlots.length === currentPlots.length) {
+      const newIndicators: FloatingIndicator[] = [];
+      
+      currentPlots.forEach((plot, idx) => {
+        const prev = prevPlots[idx];
+        if (!prev) return;
+        
+        // 1. Water level increased
+        if (plot.waterLevel > prev.waterLevel) {
+          const diff = plot.waterLevel - prev.waterLevel;
+          newIndicators.push({
+            id: Math.random(),
+            plotId: plot.id,
+            text: `+${diff}% H2O`,
+            color: '#0ea5e9',
+            timestamp: Date.now()
+          });
+        }
+        
+        // 2. Crop planted
+        if (plot.cropType && !prev.cropType) {
+          newIndicators.push({
+            id: Math.random(),
+            plotId: plot.id,
+            text: `Planted ${CROP_CONFIGS[plot.cropType].name}`,
+            color: '#10b981',
+            timestamp: Date.now()
+          });
+        }
+        
+        // 3. Crop fertilized
+        if (plot.fertilized && !prev.fertilized) {
+          newIndicators.push({
+            id: Math.random(),
+            plotId: plot.id,
+            text: `Boosted! ✨`,
+            color: '#a855f7',
+            timestamp: Date.now()
+          });
+        }
+        
+        // 4. Crop harvested or withered
+        if (!plot.cropType && prev.cropType) {
+          if (prev.growth >= 100) {
+            newIndicators.push({
+              id: Math.random(),
+              plotId: plot.id,
+              text: `Harvested! 🌾`,
+              color: '#f59e0b',
+              timestamp: Date.now()
+            });
+          } else {
+            newIndicators.push({
+              id: Math.random(),
+              plotId: plot.id,
+              text: `Withered! 🍂`,
+              color: '#ef4444',
+              timestamp: Date.now()
+            });
+          }
+        }
+      });
+      
+      if (newIndicators.length > 0) {
+        setIndicators(prev => [...prev, ...newIndicators]);
+      }
+    }
+    
+    prevPlotsRef.current = plots;
+  }, [plots]);
+
+  // Clean up indicators
+  useEffect(() => {
+    if (indicators.length > 0) {
+      const timer = setTimeout(() => {
+        setIndicators(prev => prev.filter(ind => Date.now() - ind.timestamp < 2000));
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [indicators]);
 
   const selectedPlot = selectedPlotId !== null ? plots[selectedPlotId] : null;
 
@@ -82,12 +178,23 @@ export const FarmGrid: React.FC<FarmGridProps> = ({ state, onManualAction }) => 
         </div>
 
         {/* 6x6 CSS Grid */}
-        <div className="plot-grid">
+        <div className="plot-grid" style={{ position: 'relative' }}>
+          
+          {/* Weather Overlay Container */}
+          <div className="weather-overlay-container">
+            {state.weather === 'Rainy' && <div className="weather-overlay-rain" />}
+            {state.weather === 'Storm' && <div className="weather-overlay-storm" />}
+            {state.weather === 'Heatwave' && <div className="weather-overlay-heatwave" />}
+            {state.weather === 'Drought' && <div className="weather-overlay-drought" />}
+            {state.weather === 'Sunny' && <div className="weather-overlay-sunny" />}
+          </div>
+
           {plots.map(plot => {
             const hasCrop = plot.cropType !== null;
             const isDry = plot.waterLevel < 25;
             const isHarvestReady = hasCrop && plot.growth >= 100;
             const isSelected = selectedPlotId === plot.id;
+            const plotIndicators = indicators.filter(ind => ind.plotId === plot.id);
 
             return (
               <div
@@ -103,6 +210,17 @@ export const FarmGrid: React.FC<FarmGridProps> = ({ state, onManualAction }) => 
                   boxShadow: isSelected ? '0 0 10px rgba(16, 185, 129, 0.4)' : 'none'
                 }}
               >
+                {/* Floating Indicators */}
+                {plotIndicators.map(ind => (
+                  <div 
+                    key={ind.id} 
+                    className="floating-indicator" 
+                    style={{ color: ind.color }}
+                  >
+                    {ind.text}
+                  </div>
+                ))}
+
                 {/* Plot ID */}
                 <div className="plot-id">#{plot.id}</div>
 
