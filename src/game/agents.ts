@@ -7,11 +7,18 @@ export interface AgentConfig {
   model: string; // e.g. llama3, qwen2.5-coder, mistral
   apiKey?: string;
   accountId?: string; // Cloudflare Account ID
+  userDirective?: string; // Strategy Directive (Natural Language)
 }
 
 export interface AgentResponse {
   thoughts: string;
   actions: Omit<AgentAction, 'agent'>[];
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cached_tokens?: number;
+  };
 }
 
 // -----------------------------------------------------------------

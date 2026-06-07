@@ -22,7 +22,8 @@ function App() {
     endpoint: 'http://localhost:11434',
     model: 'qwen2.5-coder:7b',
     accountId: '244693f2079c982e757ff6ec7dbd8f96',
-    apiKey: ''
+    apiKey: '',
+    userDirective: ''
   });
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [speedMs, setSpeedMs] = useState<number>(4000); // 4 seconds per tick

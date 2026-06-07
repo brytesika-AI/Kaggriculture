@@ -298,6 +298,11 @@ async def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
     # Construct prompts
     system_instructions = get_system_prompt(role)
     
+    # 1. Day 1: Natural Language Strategy Directive
+    user_directive = config.get('userDirective', '')
+    if user_directive:
+        system_instructions += f"\n\nCRITICAL STRATEGY DIRECTIVE FROM SIMULATION DIRECTOR:\n{user_directive}\nYou MUST follow this strategy directive above all other general guidelines."
+    
     day = state.get('day', 1)
     messages = [m for m in state.get('agentMessages', []) if m.get('day') == day - 1]
     
@@ -310,6 +315,17 @@ async def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
         f"[From {m.get('sender')}]: {m.get('message')}"
         for m in messages if m.get('recipient') == role
     ]) or "No new messages."
+
+    # 2. Day 3: Context & Memory Engineering (Cognitive Thoughts History)
+    history_list = state.get('agentThoughtsHistory', [])
+    if history_list:
+        history_summary = "\n".join([
+            f"Day {h['day']}: Farmer thought: \"{h.get('Farmer', '')}\" | Trader thought: \"{h.get('Trader', '')}\" | RiskAnalyst thought: \"{h.get('RiskAnalyst', '')}\""
+            for h in history_list[-3:]  # past 3 days
+        ])
+        user_prompt_memory = f"\n\nPast Agent Cognitive History (Memory):\n{history_summary}"
+    else:
+        user_prompt_memory = ""
 
     user_prompt = ""
     if role == 'Farmer':
@@ -331,7 +347,7 @@ Choose from:
 3. FERTILIZE (plotId)
 4. HARVEST (plotId)
 5. MESSAGE (recipient, message)
-6. WAIT"""
+6. WAIT{user_prompt_memory}"""
 
     elif role == 'Trader':
         user_prompt = f"""Current Game State (Day {day}):
@@ -355,7 +371,7 @@ Choose from:
 3. SELL_CROP (cropType, quantity)
 4. REFILL_WATER
 5. MESSAGE (recipient, message)
-6. WAIT"""
+6. WAIT{user_prompt_memory}"""
 
     else: # RiskAnalyst
         planted = ", ".join([f"Plot #{p.get('id')}: {p.get('cropType')} ({p.get('growth')}% grown)" for p in state.get('plots', []) if p.get('cropType') is not None]) or "No crops planted"
@@ -371,7 +387,7 @@ Incoming Messages:
 
 Choose from:
 1. MESSAGE (recipient, message)
-2. WAIT"""
+2. WAIT{user_prompt_memory}"""
 
     try:
         model_instance = LLMRegistry.new_llm(model_name)
@@ -393,6 +409,16 @@ Choose from:
         if response and response.content and response.content.parts:
             text = "".join([p.text for p in response.content.parts if p.text])
             parsed = parse_json_from_text(text)
+            
+            # 3. Day 5: Observability Token Telemetry
+            if response.usage_metadata:
+                u = response.usage_metadata
+                parsed["usage"] = {
+                    "prompt_tokens": u.prompt_token_count or 0,
+                    "completion_tokens": u.candidates_token_count or 0,
+                    "total_tokens": u.total_token_count or 0,
+                    "cached_tokens": u.cached_content_token_count or 0
+                }
             return parsed
         raise ValueError("Empty response from model")
 
@@ -420,6 +446,15 @@ Choose from:
             if response and response.content and response.content.parts:
                 text = "".join([p.text for p in response.content.parts if p.text])
                 parsed = parse_json_from_text(text)
+                
+                if response.usage_metadata:
+                    u = response.usage_metadata
+                    parsed["usage"] = {
+                        "prompt_tokens": u.prompt_token_count or 0,
+                        "completion_tokens": u.candidates_token_count or 0,
+                        "total_tokens": u.total_token_count or 0,
+                        "cached_tokens": u.cached_content_token_count or 0
+                    }
                 return parsed
             raise ValueError("Empty response in fallback")
         except Exception as fallback_error:

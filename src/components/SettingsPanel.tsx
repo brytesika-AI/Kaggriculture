@@ -98,6 +98,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         />
       </div>
 
+      {/* Strategy Directive */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--border-glass)', paddingTop: '16px' }}>
+        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--c-text-primary)' }}>Strategy Directive (Natural Language)</label>
+        <textarea 
+          className="glass-input" 
+          style={{ minHeight: '60px', resize: 'vertical', fontSize: '0.8rem', padding: '8px', background: 'rgba(0,0,0,0.2)' }}
+          value={config.userDirective || ''}
+          onChange={(e) => setConfig({ ...config, userDirective: e.target.value })}
+          placeholder="e.g. Focus purely on planting grapes for max profit, or conserve reservoir water during droughts."
+        />
+      </div>
+
       {/* Agent API Settings */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px', borderTop: '1px solid var(--border-glass)', paddingTop: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--c-text-primary)' }}>

@@ -190,6 +190,35 @@ export const AgentControlRoom: React.FC<AgentControlRoomProps> = ({
                 </div>
               </div>
 
+              {/* Token Usage Telemetry (Day 5: Observability) */}
+              {thoughts.usage && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>LLM Observability Telemetry</span>
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    fontSize: '0.8rem',
+                    background: 'rgba(255,255,255,0.01)',
+                    border: '1px solid rgba(255,255,255,0.03)',
+                    padding: '8px 12px',
+                    borderRadius: '8px'
+                  }}>
+                    <div>Prompt: <span style={{ color: 'var(--c-primary)', fontWeight: 600 }}>{thoughts.usage.prompt_tokens}</span> tokens</div>
+                    <div>•</div>
+                    <div>Completion: <span style={{ color: 'var(--c-secondary)', fontWeight: 600 }}>{thoughts.usage.completion_tokens}</span> tokens</div>
+                    <div>•</div>
+                    <div>Total: <span style={{ color: 'var(--c-text-primary)', fontWeight: 600 }}>{thoughts.usage.total_tokens}</span> tokens</div>
+                    {thoughts.usage.cached_tokens && thoughts.usage.cached_tokens > 0 ? (
+                      <>
+                        <div>•</div>
+                        <div style={{ color: '#10b981' }}>Cached: <span style={{ fontWeight: 600 }}>{thoughts.usage.cached_tokens}</span> tokens</div>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
               {/* Actions Plan Block */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <span style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Formulated Action Queue</span>

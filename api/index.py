@@ -63,7 +63,8 @@ def get_initial_state() -> dict:
         'logs': [
             { 'day': 1, 'agent': 'System', 'action': 'Simulation Start', 'details': 'Welcome to Kaggriculture. Farm initialized with $1,000.', 'type': 'info' }
         ],
-        'agentMessages': []
+        'agentMessages': [],
+        'agentThoughtsHistory': []
     }
 
 # Centralized in-memory database
@@ -485,6 +486,7 @@ class ConfigModel(BaseModel):
     model: str
     apiKey: Optional[str] = ""
     accountId: Optional[str] = ""
+    userDirective: Optional[str] = ""
 
 class ActionRequest(BaseModel):
     type: str
@@ -633,6 +635,19 @@ async def process_simulation_tick(config: ConfigModel):
 
     # 3. Tick the physics engine
     updated_state = run_simulation_tick(current_state, combined_actions)
+    
+    # Record cognitive thoughts history (memory)
+    if 'agentThoughtsHistory' not in updated_state:
+        updated_state['agentThoughtsHistory'] = []
+    updated_state['agentThoughtsHistory'].append({
+        'day': current_state['day'],
+        'Farmer': farmer_result.get('thoughts', ''),
+        'Trader': trader_result.get('thoughts', ''),
+        'RiskAnalyst': risk_result.get('thoughts', '')
+    })
+    if len(updated_state['agentThoughtsHistory']) > 10:
+        updated_state['agentThoughtsHistory'].pop(0)
+
     game_state = updated_state
 
     return {
