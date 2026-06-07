@@ -1,4 +1,6 @@
 {
+  "buildCommand": "echo skipping build",
+  "installCommand": "echo skipping install",
   "rewrites": [
     {
       "source": "/api/(.*)",
@@ -8,5 +10,11 @@
       "source": "/(.*)",
       "destination": "/$1"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.py": {
+      "includeFiles": "api/** | google/**",
+      "excludeFiles": "node_modules/** | _uv/** | src/** | public/** | dist/** | .vercel_python_packages/** | .vercel/** | .git/** | _uv_temp/** | node_modules_temp/** | .git_temp/** | package-lock.json | tsconfig*.json | eslint.config.js | vite.config.ts"
+    }
+  }
 }

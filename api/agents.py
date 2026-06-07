@@ -1,12 +1,20 @@
 import os
+import sys
 import json
 from typing import List, Optional, Literal
+
+# Add project root to sys.path to resolve local 'google.adk' imports on Vercel
+root_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
+
 from pydantic import BaseModel, Field
 from google.adk.models import LLMRegistry
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types
 from google.adk.models.llm_request import LlmRequest
 from dotenv import load_dotenv
+
 
 # Load environment variables from .env file
 load_dotenv()

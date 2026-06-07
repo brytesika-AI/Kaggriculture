@@ -1,0 +1,9 @@
+node_modules
+.git
+.venv
+venv
+edge-profile
+.vercel_python_packages
+dist
+.vercel
+_uv
