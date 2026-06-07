@@ -193,6 +193,34 @@ def run_heuristic_agent(role: str, state: dict) -> dict:
 # LangChain Multi-Agent Driver
 # -----------------------------------------------------------------
 
+def parse_json_from_text(text: str) -> dict:
+    text = text.strip()
+    # Remove markdown formatting if present
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    
+    # Try finding JSON braces
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1:
+        text = text[start:end+1]
+        
+    try:
+        data = json.loads(text)
+        # Verify schema keys exist
+        if "thoughts" not in data:
+            data["thoughts"] = "Decided actions for today."
+        if "actions" not in data:
+            data["actions"] = []
+        return data
+    except Exception as e:
+        raise ValueError(f"JSON parsing failed: {e}. Raw content: {text}")
+
 def get_system_prompt(role: str) -> str:
     return f"""You are the {role} Agent in Kaggriculture, a farming simulation game.
 You collaborate with two other agents (Farmer, Trader, RiskAnalyst) to manage a 6x6 farm grid (Plots 0-35) and maximize profits.
@@ -203,6 +231,13 @@ Your response MUST fit the AgentResponseModel schema precisely, outlining your '
 def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
     mode = config.get('mode', 'heuristic')
     
+    # Automatically detect and upgrade mode if environment variables are set
+    if mode == 'heuristic':
+        if os.environ.get('CLOUDFLARE_API_TOKEN') or os.environ.get('CLOUDFLARE_API_KEY'):
+            mode = 'cloudflare'
+        elif os.environ.get('OPENAI_API_KEY'):
+            mode = 'openai'
+
     if mode == 'heuristic':
         return run_heuristic_agent(role, state)
 
@@ -211,6 +246,18 @@ def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
     model = config.get('model', '')
     api_key = config.get('apiKey', '')
     account_id = config.get('accountId', '')
+
+    if mode == 'cloudflare':
+        api_key = api_key or os.environ.get('CLOUDFLARE_API_TOKEN') or os.environ.get('CLOUDFLARE_API_KEY') or ""
+        account_id = account_id or os.environ.get('CLOUDFLARE_ACCOUNT_ID') or ""
+        model = model or os.environ.get('LLM_MODEL') or "@cf/meta/llama-3-8b-instruct"
+    elif mode == 'ollama':
+        endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or "http://localhost:11434"
+        model = model or os.environ.get('LLM_MODEL') or "qwen2.5-coder:7b"
+    else: # openai
+        endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or os.environ.get('OPENAI_API_BASE') or ""
+        api_key = api_key or os.environ.get('OPENAI_API_KEY') or ""
+        model = model or os.environ.get('LLM_MODEL') or "gpt-4o-mini"
 
     try:
         # Resolve base URL and authentication headers
@@ -234,16 +281,20 @@ def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
                 temperature=0.1
             )
         else: # custom openai
-            base_url = f"{endpoint}/v1" if not endpoint.endswith('/v1') and not endpoint.endswith('/v1/') else endpoint
-            llm = ChatOpenAI(
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-                temperature=0.1
-            )
-
-        # Apply LangChain structured output parser (Pydantic model)
-        structured_llm = llm.with_structured_output(AgentResponseModel)
+            if endpoint:
+                base_url = f"{endpoint}/v1" if not endpoint.endswith('/v1') and not endpoint.endswith('/v1/') else endpoint
+                llm = ChatOpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                    model=model,
+                    temperature=0.1
+                )
+            else:
+                llm = ChatOpenAI(
+                    api_key=api_key,
+                    model=model,
+                    temperature=0.1
+                )
 
         # 2. Construct prompt based on role
         system_instructions = get_system_prompt(role)
@@ -329,14 +380,32 @@ Choose from:
             ("user", user_prompt)
         ])
 
-        chain = prompt_template | structured_llm
-        result = chain.invoke({})
-
-        # Return dict representation
-        return {
-            "thoughts": result.thoughts,
-            "actions": [act.dict() for act in result.actions]
-        }
+        try:
+            # Try structured output using tool calling
+            structured_llm = llm.with_structured_output(AgentResponseModel)
+            chain = prompt_template | structured_llm
+            result = chain.invoke({})
+            
+            return {
+                "thoughts": result.thoughts,
+                "actions": [act.dict() for act in result.actions]
+            }
+        except Exception as tool_error:
+            # Fall back to prompting for raw JSON and parsing it
+            print(f"Tool structured output failed: {tool_error}. Falling back to raw JSON parsing.")
+            
+            json_system = system_instructions + "\n\nCRITICAL: You must respond ONLY with a valid JSON object matching the AgentResponseModel schema. Do not write any conversational intro, outro, explanations, or wrap the JSON in markdown code blocks. Just output raw, valid JSON.\nJSON Schema:\n" + json.dumps(AgentResponseModel.model_json_schema())
+            
+            raw_prompt_template = ChatPromptTemplate.from_messages([
+                ("system", json_system),
+                ("user", user_prompt)
+            ])
+            
+            raw_chain = raw_prompt_template | llm
+            raw_res = raw_chain.invoke({})
+            
+            parsed = parse_json_from_text(raw_res.content)
+            return parsed
 
     except Exception as e:
         print(f"LangChain error querying agent {role}, falling back to heuristic: {e}")
