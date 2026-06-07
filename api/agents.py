@@ -6,6 +6,10 @@ from google.adk.models import LLMRegistry
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types
 from google.adk.models.llm_request import LlmRequest
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Register custom model prefixes to LiteLlm in LLMRegistry
 LLMRegistry._register(r'huggingface/.*', LiteLlm)
@@ -271,6 +275,10 @@ async def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
     elif mode == 'ollama':
         ollama_endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or "http://localhost:11434"
         os.environ["OLLAMA_API_BASE"] = ollama_endpoint
+        
+        ollama_key = api_key or os.environ.get('OLLAMA_API_KEY')
+        if ollama_key:
+            os.environ["OLLAMA_API_KEY"] = ollama_key
         
         if not model_name:
             model_name = os.environ.get('LLM_MODEL') or "qwen2.5-coder:7b"
