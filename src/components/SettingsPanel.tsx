@@ -30,6 +30,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     if (mode === 'openai') {
       defaultEndpoint = 'https://openrouter.ai/api/v1';
       defaultModel = 'meta-llama/llama-3-8b-instruct';
+    } else if (mode === 'cloudflare') {
+      defaultEndpoint = '';
+      defaultModel = '@cf/meta/llama-3-8b-instruct';
     } else if (mode === 'heuristic') {
       defaultEndpoint = '';
       defaultModel = 'Heuristic Engine';
@@ -102,8 +105,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <span>LLM Agent Driver</span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
-          {(['heuristic', 'ollama', 'openai'] as const).map(mode => (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+          {(['heuristic', 'ollama', 'cloudflare', 'openai'] as const).map(mode => (
             <button
               key={mode}
               onClick={() => handleModeChange(mode)}
@@ -119,6 +122,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             >
               {mode === 'heuristic' && 'Smart Local'}
               {mode === 'ollama' && 'Ollama'}
+              {mode === 'cloudflare' && 'Cloudflare'}
               {mode === 'openai' && 'Custom API'}
             </button>
           ))}
@@ -126,16 +130,31 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         {config.mode !== 'heuristic' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)' }}>API Endpoint</label>
-              <input 
-                type="text" 
-                className="glass-input" 
-                value={config.endpoint}
-                onChange={(e) => setConfig({ ...config, endpoint: e.target.value })}
-                placeholder="http://localhost:11434"
-              />
-            </div>
+            {config.mode !== 'cloudflare' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)' }}>API Endpoint</label>
+                <input 
+                  type="text" 
+                  className="glass-input" 
+                  value={config.endpoint}
+                  onChange={(e) => setConfig({ ...config, endpoint: e.target.value })}
+                  placeholder="http://localhost:11434"
+                />
+              </div>
+            )}
+
+            {config.mode === 'cloudflare' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)' }}>Cloudflare Account ID</label>
+                <input 
+                  type="text" 
+                  className="glass-input" 
+                  value={config.accountId || ''}
+                  onChange={(e) => setConfig({ ...config, accountId: e.target.value })}
+                  placeholder="Account ID"
+                />
+              </div>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)' }}>Model Name</label>
@@ -144,19 +163,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 className="glass-input" 
                 value={config.model}
                 onChange={(e) => setConfig({ ...config, model: e.target.value })}
-                placeholder="llama3"
+                placeholder={config.mode === 'cloudflare' ? '@cf/meta/llama-3-8b-instruct' : 'llama3'}
               />
             </div>
 
-            {config.mode === 'openai' && (
+            {(config.mode === 'openai' || config.mode === 'cloudflare') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)' }}>API Key</label>
+                <label style={{ fontSize: '0.75rem', color: 'var(--c-text-secondary)' }}>
+                  {config.mode === 'cloudflare' ? 'API Token' : 'API Key'}
+                </label>
                 <input 
                   type="password" 
                   className="glass-input" 
                   value={config.apiKey || ''}
                   onChange={(e) => setConfig({ ...config, apiKey: e.target.value })}
-                  placeholder="sk-..."
+                  placeholder={config.mode === 'cloudflare' ? 'Cloudflare Token' : 'sk-...'}
                 />
               </div>
             )}
@@ -174,9 +195,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             }}>
               <Database size={14} style={{ color: 'var(--c-secondary)', flexShrink: 0, marginTop: '2px' }} />
               <div>
-                {config.mode === 'ollama' ? (
+                {config.mode === 'ollama' && (
                   <span>Ensure Ollama is running and accessible (enable CORS if connecting from web browsers: set <code style={{ fontSize: '0.7rem' }}>OLLAMA_ORIGINS="*"</code>).</span>
-                ) : (
+                )}
+                {config.mode === 'cloudflare' && (
+                  <span>Connect directly to Cloudflare Workers AI. Enter your Account ID and API Token. Cloudflare will serve open source models in the cloud!</span>
+                )}
+                {config.mode === 'openai' && (
                   <span>Specify an OpenAI-compatible endpoint. Enter model identifier (e.g. meta-llama/llama-3-8b-instruct) and API Key.</span>
                 )}
               </div>

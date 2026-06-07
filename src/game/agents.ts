@@ -2,10 +2,11 @@ import type { GameState, AgentAction, CropType } from './simulation';
 import { CROP_CONFIGS } from './simulation';
 
 export interface AgentConfig {
-  mode: 'heuristic' | 'ollama' | 'openai';
+  mode: 'heuristic' | 'ollama' | 'openai' | 'cloudflare';
   endpoint: string; // e.g. http://localhost:11434
   model: string; // e.g. llama3, qwen2.5-coder, mistral
   apiKey?: string;
+  accountId?: string; // Cloudflare Account ID
 }
 
 export interface AgentResponse {
@@ -327,16 +328,21 @@ export function runHeuristicAgent(role: 'Farmer' | 'Trader' | 'RiskAnalyst', sta
 // -----------------------------------------------------------------
 
 async function fetchLLMCompletion(config: AgentConfig, systemPrompt: string, userPrompt: string): Promise<string> {
-  const url = config.mode === 'ollama' 
-    ? `${config.endpoint}/v1/chat/completions` 
-    : `${config.endpoint}/chat/completions`;
-
+  let url = '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
   };
 
-  if (config.mode === 'openai' && config.apiKey) {
+  if (config.mode === 'cloudflare') {
+    url = `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/v1/chat/completions`;
     headers['Authorization'] = `Bearer ${config.apiKey}`;
+  } else if (config.mode === 'ollama') {
+    url = `${config.endpoint}/v1/chat/completions`;
+  } else {
+    url = `${config.endpoint}/chat/completions`;
+    if (config.apiKey) {
+      headers['Authorization'] = `Bearer ${config.apiKey}`;
+    }
   }
 
   const response = await fetch(url, {
@@ -349,12 +355,14 @@ async function fetchLLMCompletion(config: AgentConfig, systemPrompt: string, use
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.1, // low temperature for structured logic
-      response_format: { type: 'json_object' } // enforce JSON if supported
+      // Only include response_format if not cloudflare, since Cloudflare AI might fail with response_format parameter
+      ...(config.mode !== 'cloudflare' ? { response_format: { type: 'json_object' } } : {})
     })
   });
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.statusText} (${response.status})`);
+    const errText = await response.text();
+    throw new Error(`API error: ${response.statusText} (${response.status}) - ${errText}`);
   }
 
   const data = await response.json();
