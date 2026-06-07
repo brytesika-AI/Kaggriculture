@@ -587,15 +587,15 @@ def execute_manual_action(req: ActionRequest):
     }
 
 @app.post("/api/tick")
-def process_simulation_tick(config: ConfigModel):
+async def process_simulation_tick(config: ConfigModel):
     global game_state, last_agent_thoughts
     
     config_dict = config.dict()
     current_state = game_state
 
-    # 1. Run sequential LangChain Multi-Agent completions
+    # 1. Run sequential ADK Multi-Agent completions
     # Risk Analyst first
-    risk_result = query_langchain_agent('RiskAnalyst', current_state, config_dict)
+    risk_result = await query_langchain_agent('RiskAnalyst', current_state, config_dict)
     last_agent_thoughts['RiskAnalyst'] = risk_result
     
     # Generate intermediate state with Analyst messages
@@ -610,7 +610,7 @@ def process_simulation_tick(config: ConfigModel):
             })
 
     # Farmer Agent
-    farmer_result = query_langchain_agent('Farmer', intermediate_state, config_dict)
+    farmer_result = await query_langchain_agent('Farmer', intermediate_state, config_dict)
     last_agent_thoughts['Farmer'] = farmer_result
     for act in farmer_result.get('actions', []):
         if act.get('type') == 'MESSAGE' and act.get('recipient') and act.get('message'):
@@ -622,7 +622,7 @@ def process_simulation_tick(config: ConfigModel):
             })
 
     # Trader Agent
-    trader_result = query_langchain_agent('Trader', intermediate_state, config_dict)
+    trader_result = await query_langchain_agent('Trader', intermediate_state, config_dict)
     last_agent_thoughts['Trader'] = trader_result
 
     # 2. Compile combined actions

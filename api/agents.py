@@ -2,8 +2,16 @@ import os
 import json
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
+from google.adk.models import LLMRegistry
+from google.adk.models.lite_llm import LiteLlm
+from google.genai import types
+from google.adk.models.llm_request import LlmRequest
+
+# Register custom model prefixes to LiteLlm in LLMRegistry
+LLMRegistry._register(r'huggingface/.*', LiteLlm)
+LLMRegistry._register(r'kaggle/.*', LiteLlm)
+LLMRegistry._register(r'cloudflare/.*', LiteLlm)
+
 
 # -----------------------------------------------------------------
 # Pydantic Schemas for LangChain Structured Output
@@ -228,7 +236,7 @@ You collaborate with two other agents (Farmer, Trader, RiskAnalyst) to manage a 
 You must choose your actions logically based on the current weather, forecasts, resources, prices, and incoming messages.
 Your response MUST fit the AgentResponseModel schema precisely, outlining your 'thoughts' and a list of 'actions'."""
 
-def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
+async def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
     mode = config.get('mode', 'heuristic')
     
     # Automatically detect and upgrade mode if environment variables are set
@@ -241,80 +249,71 @@ def query_langchain_agent(role: str, state: dict, config: dict) -> dict:
     if mode == 'heuristic':
         return run_heuristic_agent(role, state)
 
-    # 1. Configure the LLM base parameters based on selected mode
     endpoint = config.get('endpoint', '')
-    model = config.get('model', '')
+    model_name = config.get('model', '')
     api_key = config.get('apiKey', '')
     account_id = config.get('accountId', '')
 
+    # Configure environment variables based on selected mode
     if mode == 'cloudflare':
-        api_key = api_key or os.environ.get('CLOUDFLARE_API_TOKEN') or os.environ.get('CLOUDFLARE_API_KEY') or ""
-        account_id = account_id or os.environ.get('CLOUDFLARE_ACCOUNT_ID') or ""
-        model = model or os.environ.get('LLM_MODEL') or "@cf/meta/llama-3-8b-instruct"
+        cf_key = api_key or os.environ.get('CLOUDFLARE_API_TOKEN') or os.environ.get('CLOUDFLARE_API_KEY') or ""
+        cf_account = account_id or os.environ.get('CLOUDFLARE_ACCOUNT_ID') or ""
+        if cf_key:
+            os.environ["CLOUDFLARE_API_KEY"] = cf_key
+        if cf_account:
+            os.environ["CLOUDFLARE_ACCOUNT_ID"] = cf_account
+        
+        if not model_name:
+            model_name = os.environ.get('LLM_MODEL') or "@cf/meta/llama-3-8b-instruct"
+        if not model_name.startswith("cloudflare/"):
+            model_name = f"cloudflare/{model_name}"
+
     elif mode == 'ollama':
-        endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or "http://localhost:11434"
-        model = model or os.environ.get('LLM_MODEL') or "qwen2.5-coder:7b"
-    else: # openai
-        endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or os.environ.get('OPENAI_API_BASE') or ""
-        api_key = api_key or os.environ.get('OPENAI_API_KEY') or ""
-        model = model or os.environ.get('LLM_MODEL') or "gpt-4o-mini"
-
-    try:
-        # Resolve base URL and authentication headers
-        if mode == 'cloudflare':
-            base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
-            headers = {"Authorization": f"Bearer {api_key}"}
-            llm = ChatOpenAI(
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-                temperature=0.1,
-                default_headers=headers
-            )
-        elif mode == 'ollama':
-            # Ollama local OpenAI endpoint compatibility
-            base_url = f"{endpoint}/v1" if endpoint else "http://localhost:11434/v1"
-            llm = ChatOpenAI(
-                base_url=base_url,
-                api_key="ollama", # placeholder key
-                model=model,
-                temperature=0.1
-            )
-        else: # custom openai
-            if endpoint:
-                base_url = f"{endpoint}/v1" if not endpoint.endswith('/v1') and not endpoint.endswith('/v1/') else endpoint
-                llm = ChatOpenAI(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=model,
-                    temperature=0.1
-                )
-            else:
-                llm = ChatOpenAI(
-                    api_key=api_key,
-                    model=model,
-                    temperature=0.1
-                )
-
-        # 2. Construct prompt based on role
-        system_instructions = get_system_prompt(role)
+        ollama_endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or "http://localhost:11434"
+        os.environ["OLLAMA_API_BASE"] = ollama_endpoint
         
-        day = state.get('day', 1)
-        messages = [m for m in state.get('agentMessages', []) if m.get('day') == day - 1]
-        
-        plots_summary = "\n".join([
-            f"Plot #{p.get('id')}: Crop={p.get('cropType') or 'None'}, Growth={p.get('growth', 0)}%, Water={p.get('waterLevel', 0)}%, Fertilized={'Yes' if p.get('fertilized') else 'No'}"
-            for p in state.get('plots', [])
-        ])
-        
-        incoming_msgs = "\n".join([
-            f"[From {m.get('sender')}]: {m.get('message')}"
-            for m in messages if m.get('recipient') == role
-        ]) or "No new messages."
+        if not model_name:
+            model_name = os.environ.get('LLM_MODEL') or "qwen2.5-coder:7b"
+        if not model_name.startswith("ollama/"):
+            model_name = f"ollama/{model_name}"
 
-        user_prompt = ""
-        if role == 'Farmer':
-            user_prompt = f"""Current Game State (Day {day}):
+    else:  # openai / huggingface / kaggle / custom
+        if model_name.startswith("huggingface/") or model_name.startswith("kaggle/"):
+            hf_token = api_key or os.environ.get("HF_TOKEN")
+            if hf_token:
+                os.environ["HF_TOKEN"] = hf_token
+        else:
+            openai_endpoint = endpoint or os.environ.get('LLM_ENDPOINT') or os.environ.get('OPENAI_API_BASE') or ""
+            openai_key = api_key or os.environ.get('OPENAI_API_KEY') or ""
+            if openai_key:
+                os.environ["OPENAI_API_KEY"] = openai_key
+            if openai_endpoint:
+                os.environ["OPENAI_API_BASE"] = openai_endpoint
+            
+            if not model_name:
+                model_name = os.environ.get('LLM_MODEL') or "gpt-4o-mini"
+            if not model_name.startswith("openai/") and not model_name.startswith("groq/") and not model_name.startswith("anthropic/") and not model_name.startswith("azure/"):
+                model_name = f"openai/{model_name}"
+
+    # Construct prompts
+    system_instructions = get_system_prompt(role)
+    
+    day = state.get('day', 1)
+    messages = [m for m in state.get('agentMessages', []) if m.get('day') == day - 1]
+    
+    plots_summary = "\n".join([
+        f"Plot #{p.get('id')}: Crop={p.get('cropType') or 'None'}, Growth={p.get('growth', 0)}%, Water={p.get('waterLevel', 0)}%, Fertilized={'Yes' if p.get('fertilized') else 'No'}"
+        for p in state.get('plots', [])
+    ])
+    
+    incoming_msgs = "\n".join([
+        f"[From {m.get('sender')}]: {m.get('message')}"
+        for m in messages if m.get('recipient') == role
+    ]) or "No new messages."
+
+    user_prompt = ""
+    if role == 'Farmer':
+        user_prompt = f"""Current Game State (Day {day}):
 - Weather Today: {state.get('weather')}
 - Weather Forecast: {" -> ".join(state.get('weatherForecast', []))}
 - Farm Water Reservoir: {state.get('water')}/{state.get('waterCapacity')} units
@@ -334,8 +333,8 @@ Choose from:
 5. MESSAGE (recipient, message)
 6. WAIT"""
 
-        elif role == 'Trader':
-            user_prompt = f"""Current Game State (Day {day}):
+    elif role == 'Trader':
+        user_prompt = f"""Current Game State (Day {day}):
 - Cash Available: ${state.get('cash')}
 - Water Reservoir: {state.get('water')}/{state.get('waterCapacity')} units
 - Fertilizer Stock: {state.get('fertilizer')} packs
@@ -358,9 +357,9 @@ Choose from:
 5. MESSAGE (recipient, message)
 6. WAIT"""
 
-        else: # RiskAnalyst
-            planted = ", ".join([f"Plot #{p.get('id')}: {p.get('cropType')} ({p.get('growth')}% grown)" for p in state.get('plots', []) if p.get('cropType') is not None]) or "No crops planted"
-            user_prompt = f"""Current Game State (Day {day}):
+    else: # RiskAnalyst
+        planted = ", ".join([f"Plot #{p.get('id')}: {p.get('cropType')} ({p.get('growth')}% grown)" for p in state.get('plots', []) if p.get('cropType') is not None]) or "No crops planted"
+        user_prompt = f"""Current Game State (Day {day}):
 - Cash Available: ${state.get('cash')}
 - Weather Forecast: {state.get('weather')} -> {" -> ".join(state.get('weatherForecast', []))}
 - Water Reservoir: {state.get('water')}/{state.get('waterCapacity')}
@@ -374,41 +373,58 @@ Choose from:
 1. MESSAGE (recipient, message)
 2. WAIT"""
 
-        # 3. Create chat prompt template and run through LangChain chain
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", system_instructions),
-            ("user", user_prompt)
-        ])
-
-        try:
-            # Try structured output using tool calling
-            structured_llm = llm.with_structured_output(AgentResponseModel)
-            chain = prompt_template | structured_llm
-            result = chain.invoke({})
+    try:
+        model_instance = LLMRegistry.new_llm(model_name)
+        
+        llm_request = LlmRequest()
+        llm_request.config.system_instruction = system_instructions
+        llm_request.contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_prompt)]
+            )
+        ]
+        llm_request.set_output_schema(AgentResponseModel)
+        
+        response = None
+        async for resp in model_instance.generate_content_async(llm_request, stream=False):
+            response = resp
             
-            return {
-                "thoughts": result.thoughts,
-                "actions": [act.dict() for act in result.actions]
-            }
-        except Exception as tool_error:
-            # Fall back to prompting for raw JSON and parsing it
-            print(f"Tool structured output failed: {tool_error}. Falling back to raw JSON parsing.")
-            
-            json_system = system_instructions + "\n\nCRITICAL: You must respond ONLY with a valid JSON object matching the AgentResponseModel schema. Do not write any conversational intro, outro, explanations, or wrap the JSON in markdown code blocks. Just output raw, valid JSON.\nJSON Schema:\n" + json.dumps(AgentResponseModel.model_json_schema())
-            
-            raw_prompt_template = ChatPromptTemplate.from_messages([
-                ("system", json_system),
-                ("user", user_prompt)
-            ])
-            
-            raw_chain = raw_prompt_template | llm
-            raw_res = raw_chain.invoke({})
-            
-            parsed = parse_json_from_text(raw_res.content)
+        if response and response.content and response.content.parts:
+            text = "".join([p.text for p in response.content.parts if p.text])
+            parsed = parse_json_from_text(text)
             return parsed
+        raise ValueError("Empty response from model")
 
-    except Exception as e:
-        print(f"LangChain error querying agent {role}, falling back to heuristic: {e}")
-        fallback = run_heuristic_agent(role, state)
-        fallback['thoughts'] = f"[LangChain Fallback] {fallback['thoughts']} (Error: {str(e)})"
-        return fallback
+    except Exception as adk_error:
+        print(f"ADK structured output query failed: {adk_error}. Falling back to raw JSON completion.")
+        
+        model_instance = LLMRegistry.new_llm(model_name)
+        
+        json_system = system_instructions + "\n\nCRITICAL: You must respond ONLY with a valid JSON object matching the AgentResponseModel schema. Do not write any conversational intro, outro, explanations, or wrap the JSON in markdown code blocks. Just output raw, valid JSON.\nJSON Schema:\n" + json.dumps(AgentResponseModel.model_json_schema())
+        
+        llm_request = LlmRequest()
+        llm_request.config.system_instruction = json_system
+        llm_request.contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_prompt)]
+            )
+        ]
+        
+        try:
+            response = None
+            async for resp in model_instance.generate_content_async(llm_request, stream=False):
+                response = resp
+                
+            if response and response.content and response.content.parts:
+                text = "".join([p.text for p in response.content.parts if p.text])
+                parsed = parse_json_from_text(text)
+                return parsed
+            raise ValueError("Empty response in fallback")
+        except Exception as fallback_error:
+            print(f"Fallback completion query failed: {fallback_error}. Falling back to heuristics.")
+            fallback = run_heuristic_agent(role, state)
+            fallback['thoughts'] = f"[ADK Fallback] {fallback['thoughts']} (Errors: ADK={str(adk_error)}, Fallback={str(fallback_error)})"
+            return fallback
+
