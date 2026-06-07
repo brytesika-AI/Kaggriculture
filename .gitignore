@@ -26,3 +26,14 @@ dist-ssr
 # Browser profiles
 chrome-profile
 edge-profile
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
